@@ -25,7 +25,17 @@ class TwitterClient:
         logger.info("Setting up browser")
         self.playwright = sync_playwright().start()
         
-        browser_args = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        browser_args = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-infobars',
+            '--start-maximized',
+            '--window-size=1920,1080',
+            '--lang=en-US,en',
+            '--force-device-scale-factor=1',
+        ]
         logger.info(f"Browser arguments: {browser_args}")
         
         # Check if storage state exists and is valid
@@ -45,16 +55,19 @@ class TwitterClient:
                 storage_state = None
         else:
             logger.info("No session file found, will create new session")
-          # Launch browser with custom user agent
+        
+        # Launch browser with custom user agent
         self.browser = self.playwright.chromium.launch(
-            headless=True,  # Headless mode for production
+            headless=True,  # headless mode for production
             args=browser_args
         )
-        logger.info("Browser launched successfully in visible mode")
+        logger.info("Browser launched successfully in headless mode")
         
-        # Create context with storage state if available
+        # Create context with enhanced settings
         self.context = self.browser.new_context(
-            user_agent=get_random_user_agent(),
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            locale='en-US',
             storage_state=storage_state
         )
         logger.info("Browser context created")
@@ -76,8 +89,10 @@ class TwitterClient:
             logger.info("===== STARTING TWITTER LOGIN PROCESS =====")
             logger.info("Navigating to Twitter login page")
             
-            # Navigate directly to login page with networkidle wait
-            self.page.goto("https://twitter.com/i/flow/login", wait_until="networkidle")
+            # Navigate directly to login page with enhanced wait
+            self.page.goto("https://twitter.com/i/flow/login")
+            self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_load_state("domcontentloaded")
             random_delay(3, 5)
             
             # Take screenshot for debugging
@@ -86,6 +101,9 @@ class TwitterClient:
             
             # STEP 1: USERNAME ENTRY
             logger.info("STEP 1: Entering username")
+            
+            # Wait for the page to be fully interactive
+            self.page.wait_for_load_state("networkidle")
             
             # Multiple selectors for username input
             username_selectors = [
@@ -98,221 +116,101 @@ class TwitterClient:
             username_entered = False
             for selector in username_selectors:
                 try:
-                    username_field = self.page.wait_for_selector(selector, state="visible", timeout=20000)
+                    username_field = self.page.wait_for_selector(selector, timeout=5000)
                     if username_field:
-                        self.page.fill(selector, os.getenv("TWITTER_USERNAME"))
+                        username_field.fill(os.getenv('TWITTER_USERNAME'))
                         logger.info(f"Entered username using selector: {selector}")
                         username_entered = True
                         break
                 except Exception as e:
                     logger.info(f"Username selector {selector} failed: {str(e)}")
                     continue
-            
+                    
             if not username_entered:
                 raise Exception("Could not find or fill username field")
-            
+                
             random_delay(2, 3)
             
-            # Click next with multiple approaches
+            # Click next button after username
             logger.info("Clicking next after username")
-            next_clicked = False
+            next_button = self.page.get_by_role("button", name="Next")
+            next_button.click()
             
-            # Try regular click first
-            try:
-                next_button = self.page.wait_for_selector('[role="button"]:has-text("Next")', timeout=5000)
-                if next_button:
-                    next_button.click()
-                    next_clicked = True
-            except:
-                logger.info("Regular next button click failed, trying JavaScript")
-            
-            # Try JavaScript click as fallback
-            if not next_clicked:
-                next_result = self.page.evaluate('''() => {
-                    const nextButtons = Array.from(document.querySelectorAll('[role="button"]'));
-                    const nextButton = nextButtons.find(btn => 
-                        btn.textContent.includes("Next") || 
-                        btn.textContent.includes("İleri"));
-                    if (nextButton) {
-                        nextButton.click();
-                        return "clicked";
-                    }
-                    return "not found";
-                }''')
-                logger.info(f"Next button click result: {next_result}")
-                next_clicked = next_result == "clicked"
-            
-            if not next_clicked:
-                raise Exception("Could not click next button")
-            
-            random_delay(5, 8)
+            random_delay(6, 8)
             
             # STEP 2: PASSWORD ENTRY
             logger.info("STEP 2: Entering password")
             
-            # Multiple selectors for password input
+            # Enhanced password selectors
             password_selectors = [
                 'input[name="password"]',
                 'input[autocomplete="current-password"]',
                 '[data-testid="LoginForm_Password_Input"]',
-                'input[type="password"]'
+                'input[type="password"]',
+                'input[aria-label="Password"]'
             ]
             
+            # Try each password selector with proper waits
             password_entered = False
             for selector in password_selectors:
                 try:
-                    password_field = self.page.wait_for_selector(selector, state="visible", timeout=20000)
+                    # Wait for the selector with a reasonable timeout
+                    password_field = self.page.wait_for_selector(selector, timeout=20000)
                     if password_field:
-                        self.page.fill(selector, os.getenv("TWITTER_PASSWORD"))
-                        logger.info("Password entered")
+                        password_field.fill(os.getenv('TWITTER_PASSWORD'))
+                        logger.info(f"Entered password using selector: {selector}")
                         password_entered = True
+                        
+                        # Take verification screenshot
+                        self.page.screenshot(path="2_password_entered.png")
                         break
                 except Exception as e:
                     logger.info(f"Password selector {selector} failed: {str(e)}")
                     continue
-            
+                    
             if not password_entered:
                 raise Exception("Could not find or fill password field")
-            
+                
             random_delay(2, 3)
             
-            # Click login with multiple approaches
+            # Click login button
             logger.info("Clicking login button")
-            login_clicked = False
+            login_button = self.page.get_by_role("button", name="Log in")
+            login_button.click()
             
-            # Try regular click first
+            # Wait for navigation and possible verification
+            self.page.wait_for_load_state("networkidle")
+            random_delay(4, 6)
+            
+            # Check for verification code requirement
+            if "Verify your identity" in self.page.content() or "confirmation code" in self.page.content():
+                logger.info("Verification code required, checking email")
+                verification_code = self._get_verification_code()
+                if verification_code:
+                    self._handle_verification(verification_code)
+                else:
+                    raise Exception("Could not get verification code from email")
+                    
+            # Final check - Look for typical elements that indicate successful login
             try:
-                login_button = self.page.wait_for_selector('[role="button"]:has-text("Log in")', timeout=5000)
-                if login_button:
-                    login_button.click()
-                    login_clicked = True
-            except:
-                logger.info("Regular login button click failed, trying JavaScript")
-            
-            # Try JavaScript click as fallback
-            if not login_clicked:
-                login_result = self.page.evaluate('''() => {
-                    const loginButtons = Array.from(document.querySelectorAll('[role="button"]'));
-                    const loginButton = loginButtons.find(btn => 
-                        btn.textContent.includes("Log in") || 
-                        btn.textContent.includes("Giriş yap"));
-                    if (loginButton) {
-                        loginButton.click();
-                        return "clicked";
-                    }
-                    return "not found";
-                }''')
-                logger.info(f"Login button click result: {login_result}")
-                login_clicked = login_result == "clicked"
-            
-            random_delay(10, 15)
-
-            # Check for verification code need
-            logger.info("STEP 3: Checking if verification is needed")
-            self.page.screenshot(path="3_after_login.png")
-            
-            current_url = self.page.url
-            page_content = self.page.content().lower()
-            logger.info(f"Current URL after login: {current_url}")
-            
-            # Handle verification if needed
-            if ("login" in current_url.lower() or "i/flow" in current_url.lower()) and not "home" in current_url.lower():
-                if ("verification" in page_content or 
-                    "confirm" in page_content or 
-                    "code" in page_content or 
-                    "verify" in page_content):
-                    logger.info("Verification appears to be needed")
-                    logger.info("STEP 4: Getting verification code from Gmail")
-                    
-                    # Get verification code from Gmail
-                    gmail_reader = GmailReader()
-                    verification_code = gmail_reader.get_twitter_verification_code()
-                    
-                    if verification_code:
-                        logger.info(f"Retrieved verification code: {verification_code}")
-                        
-                        # Multiple selectors for verification code input
-                        code_selectors = [
-                            'input[name="text"]',
-                            'input[data-testid="ocfEnterTextTextInput"]',
-                            'input[placeholder*="code"]',
-                            'input[type="text"]'
-                        ]
-                        
-                        code_entered = False
-                        for selector in code_selectors:
-                            try:
-                                if self.page.query_selector(selector):
-                                    self.page.fill(selector, verification_code)
-                                    logger.info(f"Entered verification code using selector: {selector}")
-                                    code_entered = True
-                                    break
-                            except:
-                                continue
-                        
-                        if not code_entered:
-                            logger.error("Could not enter verification code")
-                            return False
-                        
-                        random_delay(2, 3)
-                        
-                        # Click verify button
-                        logger.info("Clicking verify button")
-                        verify_clicked = False
-                        
-                        try:
-                            verify_button = self.page.wait_for_selector('[role="button"]:has-text("Next")', timeout=5000)
-                            if verify_button:
-                                verify_button.click()
-                                verify_clicked = True
-                        except:
-                            logger.info("Regular verify button click failed, trying JavaScript")
-                        
-                        if not verify_clicked:
-                            verify_result = self.page.evaluate('''() => {
-                                const buttons = Array.from(document.querySelectorAll('[role="button"]'));
-                                const verifyButton = buttons.find(btn => 
-                                    btn.textContent.includes("Next") || 
-                                    btn.textContent.includes("Verify") || 
-                                    btn.textContent.includes("İleri") ||
-                                    btn.textContent.includes("Doğrula"));
-                                if (verifyButton) {
-                                    verifyButton.click();
-                                    return "clicked";
-                                }
-                                return "not found";
-                            }''')
-                            logger.info(f"Verify button click result: {verify_result}")
-                            verify_clicked = verify_result == "clicked"
-                        
-                        random_delay(5, 8)
-                    else:
-                        logger.error("Could not get verification code")
-                        return False
-            
-            logger.info("Checking if login was successful")
-            random_delay(5, 8)
-            
-            # Final URL check
-            final_url = self.page.url
-            logger.info(f"Final URL: {final_url}")
-            
-            if "home" in final_url.lower():
-                logger.info("SUCCESS: Logged in successfully based on URL")
+                self.page.wait_for_selector('[data-testid="SideNav_NewTweet_Button"]', timeout=10000)
+                logger.info("Successfully logged in to Twitter")
                 self.is_logged_in = True
-                # Save session for future use
+                
+                # Save the authenticated state
                 self.context.storage_state(path=self.session_file)
-                logger.info("Session saved to twitter_session.json")
-                return True
-            else:
-                logger.error("Login appears to have failed")
-                return False
+                logger.info("Saved authenticated session state")
+                
+            except Exception as e:
+                logger.error(f"Login status check failed: {str(e)}")
+                self.page.screenshot(path="login_error.png")
+                raise Exception("Login verification failed")
                 
         except Exception as e:
             logger.error(f"Login failed with error: {str(e)}")
             self.page.screenshot(path="login_error.png")
-            return False
-    
+            raise
+
     def _split_into_tweets(self, content):
         """Split content into tweets while preserving sentence integrity"""
         # Give some buffer space for safety (URLs, emojis, etc.)
