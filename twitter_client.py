@@ -24,20 +24,21 @@ class TwitterClient:
         """Initialize the browser with enhanced anti-detection settings"""
         logger.info("Setting up browser")
         self.playwright = sync_playwright().start()
+        
         browser_args = [
             "--no-sandbox",
-            "--disable-setuid-sandbox",
+            "--disable-setuid-sandbox", 
             "--disable-dev-shm-usage",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
-            "--start-maximized",
             "--window-size=1920,1080",
-            "--lang=en-US,en",
-            "--force-device-scale-factor=1",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-site-isolation-trials",
+            "--disable-blink-features=AutomationControlled",
             "--disable-web-security",
-            "--disable-gpu",
+            "--disable-features=site-per-process,TranslateUI",
+            "--disable-site-isolation-trials",
+            "--metrics-recording-only",
+            "--no-first-run",
+            "--no-service-autorun",
+            "--disable-extensions",
+            "--font-render-hinting=none"
         ]
         logger.info(f"Browser arguments: {browser_args}")
         
@@ -267,30 +268,111 @@ class TwitterClient:
             
             # Take screenshot after login attempt
             self.page.screenshot(path="4_after_login.png", full_page=True)
-            
-            # Check for verification code requirement
+              # Check for various post-login scenarios
+            logger.info("Checking post-login state...")
             page_content = self.page.content()
-            if "Verify your identity" in page_content or "confirmation code" in page_content:
-                logger.info("Verification code required, checking email")
-                verification_code = self._get_verification_code()
-                if verification_code:
-                    self._handle_verification(verification_code)
-                else:
-                    raise Exception("Could not get verification code from email")
             
-            # Final check for successful login
+            # Take screenshot for debugging
+            self.page.screenshot(path="post_login_state.png", full_page=True)
+            
+            # Check for verification code or any security checks
+            security_indicators = [
+                "Verify your identity",
+                "confirmation code",
+                "unusual login",
+                "suspicious activity",
+                "verify it's you",
+                "Enter your phone number",
+                "Check your phone"
+            ]
+            
+            if any(indicator in page_content for indicator in security_indicators):
+                logger.info("Security verification required")
+                if "confirmation code" in page_content or "verify it's you" in page_content:
+                    logger.info("Email verification code required, checking email")
+                    verification_code = self._get_verification_code()
+                    if verification_code:
+                        self._handle_verification(verification_code)
+                    else:
+                        raise Exception("Could not get verification code from email")
+                else:
+                    # Try JavaScript click on any "Continue" or "Skip" buttons that might appear
+                    try:
+                        self.page.evaluate('''
+                            const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
+                            const skipButton = buttons.find(el => 
+                                el.textContent.includes('Skip') || 
+                                el.textContent.includes('Continue') || 
+                                el.textContent.includes('Not now')
+                            );
+                            if (skipButton) skipButton.click();
+                        ''')
+                        logger.info("Clicked skip/continue button")
+                        random_delay(2, 3)
+                    except Exception as e:
+                        logger.warning(f"Could not find skip button: {str(e)}")
+                        
+            # Wait longer for the home feed to load
+            random_delay(5, 8)
+              # Final check for successful login with multiple indicators
             try:
-                self.page.wait_for_selector('[data-testid="SideNav_NewTweet_Button"]', timeout=10000)
-                logger.info("Successfully logged in to Twitter")
-                self.is_logged_in = True
+                success_selectors = [
+                    '[data-testid="SideNav_NewTweet_Button"]',
+                    '[data-testid="AppTabBar_Home_Link"]',
+                    '[aria-label="Home"]',
+                    '[aria-label="Tweet"]',
+                    '[data-testid="tweetButtonInline"]'
+                ]
                 
-                # Save the authenticated state
-                self.context.storage_state(path=self.session_file)
-                logger.info("Saved authenticated session state")
+                login_success = False
+                for selector in success_selectors:
+                    try:
+                        self.page.wait_for_selector(selector, timeout=5000)
+                        login_success = True
+                        logger.info(f"Login verified with selector: {selector}")
+                        break
+                    except Exception as e:
+                        logger.info(f"Selector {selector} not found for login verification")
+                        continue
+                
+                if not login_success:
+                    # Try JavaScript detection of home feed elements
+                    js_success = self.page.evaluate('''
+                        const homeElements = document.querySelectorAll('[aria-label="Home"]');
+                        const tweetButtons = document.querySelectorAll('[aria-label="Tweet"]');
+                        const timeline = document.querySelector('[data-testid="primaryColumn"]');
+                        return homeElements.length > 0 || tweetButtons.length > 0 || timeline !== null;
+                    ''')
+                    
+                    if js_success:
+                        login_success = True
+                        logger.info("Login verified through JavaScript checks")
+                
+                if login_success:
+                    logger.info("Successfully logged in to Twitter")
+                    self.is_logged_in = True
+                    
+                    # Save the authenticated state
+                    self.context.storage_state(path=self.session_file)
+                    logger.info("Saved authenticated session state")
+                else:
+                    raise Exception("Could not verify successful login")
                 
             except Exception as e:
                 logger.error(f"Login status check failed: {str(e)}")
                 self.page.screenshot(path="5_login_error.png", full_page=True)
+                
+                # Try to get any error messages
+                try:
+                    error_message = self.page.evaluate('''
+                        const errorElements = document.querySelectorAll('[role="alert"], .error-message, [data-testid*="error"]');
+                        return Array.from(errorElements).map(el => el.textContent).join(", ");
+                    ''')
+                    if error_message:
+                        logger.error(f"Found error message on page: {error_message}")
+                except:
+                    pass
+                    
                 raise Exception("Login verification failed")
             
         except Exception as e:
