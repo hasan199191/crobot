@@ -21,20 +21,23 @@ class TwitterClient:
         self.is_logged_in = False
         
     def _setup_browser(self):
-        """Initialize the browser with appropriate settings"""
+        """Initialize the browser with enhanced anti-detection settings"""
         logger.info("Setting up browser")
         self.playwright = sync_playwright().start()
         
         browser_args = [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-infobars',
-            '--start-maximized',
-            '--window-size=1920,1080',
-            '--lang=en-US,en',
-            '--force-device-scale-factor=1',
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--start-maximized",
+            "--window-size=1920,1080",
+            "--lang=en-US,en",
+            "--force-device-scale-factor=1",
+            "--single-process",
+            "--disable-gpu",
+            "--remote-debugging-pipe",
         ]
         logger.info(f"Browser arguments: {browser_args}")
         
@@ -44,7 +47,6 @@ class TwitterClient:
         
         if storage_path.exists():
             try:
-                # Check if file contains valid JSON
                 import json
                 with open(storage_path, 'r') as f:
                     json.load(f)
@@ -56,9 +58,9 @@ class TwitterClient:
         else:
             logger.info("No session file found, will create new session")
         
-        # Launch browser with custom user agent
+        # Launch browser with enhanced settings
         self.browser = self.playwright.chromium.launch(
-            headless=True,  # headless mode for production
+            headless=True,
             args=browser_args
         )
         logger.info("Browser launched successfully in headless mode")
@@ -66,22 +68,52 @@ class TwitterClient:
         # Create context with enhanced settings
         self.context = self.browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080},
-            locale='en-US',
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
             storage_state=storage_state
         )
         logger.info("Browser context created")
         
-        # Create page
+        # Create page and add anti-detection scripts
         self.page = self.context.new_page()
         logger.info("Browser page created")
+        
+        # Disable webdriver flag
+        self.page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            
+            // Hide automation-related properties
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({state: Notification.permission}) :
+                    originalQuery(parameters)
+            );
+            
+            // Fake plugins and languages
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5].map(() => ({
+                    0: {type: "application/x-google-chrome-pdf"},
+                    description: "Portable Document Format",
+                    filename: "internal-pdf-viewer",
+                    length: 1,
+                    name: "Chrome PDF Plugin"
+                }))
+            });
+            
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ["en-US", "en"]
+            });
+        """)
         
         # Set default timeout
         self.page.set_default_timeout(60000)
         logger.info("Default timeout set to 60 seconds")
         
     def login(self):
-        """Handle Twitter login process with improved selectors and wait times"""
+        """Handle Twitter login process with enhanced anti-detection measures"""
         if self.playwright is None:
             self._setup_browser()
             
@@ -89,23 +121,25 @@ class TwitterClient:
             logger.info("===== STARTING TWITTER LOGIN PROCESS =====")
             logger.info("Navigating to Twitter login page")
             
-            # Navigate directly to login page with enhanced wait
+            # Go directly to login page
             self.page.goto("https://twitter.com/i/flow/login")
+            
+            # Wait for page to be fully loaded and interactive
             self.page.wait_for_load_state("networkidle")
             self.page.wait_for_load_state("domcontentloaded")
+            
+            # Additional wait for any dynamic content
             random_delay(3, 5)
             
             # Take screenshot for debugging
-            self.page.screenshot(path="1_login_page.png")
+            self.page.screenshot(path="1_login_page.png", full_page=True)
             logger.info("Saved login page screenshot")
             
             # STEP 1: USERNAME ENTRY
             logger.info("STEP 1: Entering username")
             
-            # Wait for the page to be fully interactive
-            self.page.wait_for_load_state("networkidle")
-            
-            # Multiple selectors for username input
+            # Try to find username field with multiple approaches
+            username_entered = False
             username_selectors = [
                 'input[name="text"]',
                 'input[autocomplete="username"]',
@@ -113,35 +147,62 @@ class TwitterClient:
                 'input[type="text"]'
             ]
             
-            username_entered = False
             for selector in username_selectors:
                 try:
-                    username_field = self.page.wait_for_selector(selector, timeout=5000)
-                    if username_field:
-                        username_field.fill(os.getenv('TWITTER_USERNAME'))
-                        logger.info(f"Entered username using selector: {selector}")
+                    # Try both normal selector and JavaScript evaluation
+                    try:
+                        username_field = self.page.wait_for_selector(selector, timeout=5000)
+                        if username_field:
+                            username_field.fill(os.getenv('TWITTER_USERNAME'))
+                            username_entered = True
+                            logger.info(f"Entered username using selector: {selector}")
+                            break
+                    except:
+                        # Try JavaScript fallback
+                        self.page.evaluate(f'''
+                            const el = document.querySelector('{selector}');
+                            if (el) {{
+                                el.value = '{os.getenv('TWITTER_USERNAME')}';
+                                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            }}
+                        ''')
                         username_entered = True
+                        logger.info(f"Entered username using JavaScript for selector: {selector}")
                         break
                 except Exception as e:
                     logger.info(f"Username selector {selector} failed: {str(e)}")
                     continue
-                    
+            
             if not username_entered:
                 raise Exception("Could not find or fill username field")
-                
+            
             random_delay(2, 3)
             
-            # Click next button after username
+            # Click next button after username using multiple approaches
             logger.info("Clicking next after username")
-            next_button = self.page.get_by_role("button", name="Next")
-            next_button.click()
+            try:
+                next_button = self.page.get_by_role("button", name="Next")
+                next_button.click()
+            except:
+                try:
+                    # Try finding by text content
+                    self.page.click("text=Next")
+                except:
+                    # JavaScript fallback
+                    self.page.evaluate('''
+                        Array.from(document.querySelectorAll('div[role="button"]')).find(el => el.textContent.includes('Next'))?.click();
+                    ''')
             
             random_delay(6, 8)
+            
+            # Take screenshot after username step
+            self.page.screenshot(path="2_after_username.png", full_page=True)
             
             # STEP 2: PASSWORD ENTRY
             logger.info("STEP 2: Entering password")
             
-            # Enhanced password selectors
+            # Wait for password field with multiple approaches
             password_selectors = [
                 'input[name="password"]',
                 'input[autocomplete="current-password"]',
@@ -150,48 +211,74 @@ class TwitterClient:
                 'input[aria-label="Password"]'
             ]
             
-            # Try each password selector with proper waits
             password_entered = False
             for selector in password_selectors:
                 try:
-                    # Wait for the selector with a reasonable timeout
-                    password_field = self.page.wait_for_selector(selector, timeout=20000)
-                    if password_field:
-                        password_field.fill(os.getenv('TWITTER_PASSWORD'))
-                        logger.info(f"Entered password using selector: {selector}")
+                    # Try both normal selector and JavaScript evaluation
+                    try:
+                        password_field = self.page.wait_for_selector(selector, timeout=8000)
+                        if password_field:
+                            password_field.fill(os.getenv('TWITTER_PASSWORD'))
+                            password_entered = True
+                            logger.info(f"Entered password using selector: {selector}")
+                            break
+                    except:
+                        # Try JavaScript fallback
+                        self.page.evaluate(f'''
+                            const el = document.querySelector('{selector}');
+                            if (el) {{
+                                el.value = '{os.getenv('TWITTER_PASSWORD')}';
+                                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            }}
+                        ''')
                         password_entered = True
-                        
-                        # Take verification screenshot
-                        self.page.screenshot(path="2_password_entered.png")
+                        logger.info(f"Entered password using JavaScript for selector: {selector}")
                         break
                 except Exception as e:
                     logger.info(f"Password selector {selector} failed: {str(e)}")
                     continue
-                    
+            
             if not password_entered:
+                # Take debug screenshot
+                self.page.screenshot(path="3_password_field_not_found.png", full_page=True)
                 raise Exception("Could not find or fill password field")
-                
+            
             random_delay(2, 3)
             
-            # Click login button
+            # Click login button using multiple approaches
             logger.info("Clicking login button")
-            login_button = self.page.get_by_role("button", name="Log in")
-            login_button.click()
+            try:
+                login_button = self.page.get_by_role("button", name="Log in")
+                login_button.click()
+            except:
+                try:
+                    # Try finding by text content
+                    self.page.click("text=Log in")
+                except:
+                    # JavaScript fallback
+                    self.page.evaluate('''
+                        Array.from(document.querySelectorAll('div[role="button"]')).find(el => el.textContent.includes('Log in'))?.click();
+                    ''')
             
-            # Wait for navigation and possible verification
+            # Wait for navigation and check for verification
             self.page.wait_for_load_state("networkidle")
             random_delay(4, 6)
             
+            # Take screenshot after login attempt
+            self.page.screenshot(path="4_after_login.png", full_page=True)
+            
             # Check for verification code requirement
-            if "Verify your identity" in self.page.content() or "confirmation code" in self.page.content():
+            page_content = self.page.content()
+            if "Verify your identity" in page_content or "confirmation code" in page_content:
                 logger.info("Verification code required, checking email")
                 verification_code = self._get_verification_code()
                 if verification_code:
                     self._handle_verification(verification_code)
                 else:
                     raise Exception("Could not get verification code from email")
-                    
-            # Final check - Look for typical elements that indicate successful login
+            
+            # Final check for successful login
             try:
                 self.page.wait_for_selector('[data-testid="SideNav_NewTweet_Button"]', timeout=10000)
                 logger.info("Successfully logged in to Twitter")
@@ -203,12 +290,12 @@ class TwitterClient:
                 
             except Exception as e:
                 logger.error(f"Login status check failed: {str(e)}")
-                self.page.screenshot(path="login_error.png")
+                self.page.screenshot(path="5_login_error.png", full_page=True)
                 raise Exception("Login verification failed")
-                
+            
         except Exception as e:
             logger.error(f"Login failed with error: {str(e)}")
-            self.page.screenshot(path="login_error.png")
+            self.page.screenshot(path="login_error.png", full_page=True)
             raise
 
     def _split_into_tweets(self, content):
