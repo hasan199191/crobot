@@ -24,7 +24,6 @@ class TwitterClient:
         """Initialize the browser with enhanced anti-detection settings"""
         logger.info("Setting up browser")
         self.playwright = sync_playwright().start()
-        
         browser_args = [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -35,9 +34,10 @@ class TwitterClient:
             "--window-size=1920,1080",
             "--lang=en-US,en",
             "--force-device-scale-factor=1",
-            "--single-process",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--disable-web-security",
             "--disable-gpu",
-            "--remote-debugging-pipe",
         ]
         logger.info(f"Browser arguments: {browser_args}")
         
