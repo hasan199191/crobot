@@ -58,20 +58,21 @@ class TwitterClient:
                 storage_state = None
         else:
             logger.info("No session file found, will create new session")
-        
-        # Launch browser with enhanced settings
-        self.browser = self.playwright.chromium.launch(
-            headless=True,
-            args=browser_args
+          # Launch Firefox browser for better automation handling
+        self.browser = self.playwright.firefox.launch(
+            headless=True
         )
         logger.info("Browser launched successfully in headless mode")
-        
-        # Create context with enhanced settings
+          # Create context with Firefox-specific settings
         self.context = self.browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/114.0",
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
-            storage_state=storage_state
+            storage_state=storage_state,
+            timezone_id="Europe/Istanbul",
+            geolocation={"latitude": 41.0082, "longitude": 28.9784},
+            permissions=['geolocation'],
+            color_scheme='dark'
         )
         logger.info("Browser context created")
         
@@ -321,7 +322,11 @@ class TwitterClient:
                     '[data-testid="AppTabBar_Home_Link"]',
                     '[aria-label="Home"]',
                     '[aria-label="Tweet"]',
-                    '[data-testid="tweetButtonInline"]'
+                    '[data-testid="tweetButtonInline"]',
+                    'div[data-testid="primaryColumn"]',
+                    '[data-testid="AppTabBar_Profile_Link"]',
+                    'a[href="/home"]',
+                    '[data-testid="DashButton_NewTweet_Button"]'
                 ]
                 
                 login_success = False
