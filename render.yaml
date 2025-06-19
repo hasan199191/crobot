@@ -1,0 +1,26 @@
+services:
+  - type: worker
+    name: twitter-bot
+    env: python
+    buildCommand: pip install -r requirements.txt && playwright install chromium && playwright install-deps
+    startCommand: python main.py
+    envVars:
+      - key: TWITTER_USERNAME
+        sync: false
+      - key: TWITTER_PASSWORD
+        sync: false
+      - key: GMAIL_USERNAME
+        sync: false
+      - key: GMAIL_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: GOOGLE_CHROME_BIN
+        value: /usr/bin/google-chrome
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: "true"
+    autoDeploy: true
+    healthCheckPath: /
+    plan: starter
